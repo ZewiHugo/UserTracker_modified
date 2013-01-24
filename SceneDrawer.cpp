@@ -46,6 +46,7 @@ extern XnBool g_bPrintState;
 
 extern XnBool g_bPrintFrameID;
 extern XnBool g_bMarkJoints;
+GLfloat texcoords[8];
 
 #include <map>
 std::map<XnUInt32, std::pair<XnCalibrationStatus, XnPoseDetectionStatus> > m_Errors;
@@ -81,7 +82,6 @@ GLuint initTexture(void** buf, int& width, int& height)
 	return texID;
 }
 
-GLfloat texcoords[8];
 void DrawRectangle(float topLeftX, float topLeftY, float bottomRightX, float bottomRightY)
 {
 	GLfloat verts[8] = {	topLeftX, topLeftY,
@@ -95,6 +95,7 @@ void DrawRectangle(float topLeftX, float topLeftY, float bottomRightX, float bot
 	//TODO: Maybe glFinish needed here instead - if there's some bad graphics crap
 	glFlush();
 }
+
 void DrawTexture(float topLeftX, float topLeftY, float bottomRightX, float bottomRightY)
 {
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
@@ -261,7 +262,7 @@ const XnChar* GetPoseErrorString(XnPoseDetectionStatus error)
 }
 
 
-void DrawDepthMap(const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd)
+void DrawDepthMap(const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd, float COM_tracker[][100], int Bounding_Box[][4])
 {
 	static bool bInitialized = false;	
 	static GLuint depthTexID;
@@ -407,10 +408,30 @@ void DrawDepthMap(const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd)
 	for (int i = 0; i < nUsers; ++i)
 	{
 #ifndef USE_GLES
+		XnPoint3D com;
+                g_UserGenerator.GetCoM(aUsers[i], com);
+                XnPoint3D com2 = com;
+		//generater COM tracker
+		if (aUsers[i] < 15)
+		{
+			int label = aUsers[i];
+			for (int j = 99; j >= 1; --j)
+			{
+				float COM_value = COM_tracker[label][j-1];
+				COM_tracker[label][j] = COM_value;
+			}
+			COM_tracker[label][0] = com2.Z;
+		}		
+		else
+		{
+			printf("UserID is larger than 15");
+		}
+				
+				
 		if (g_bPrintID)
 		{
-			XnPoint3D com;
-			g_UserGenerator.GetCoM(aUsers[i], com);
+			//printf("User %d : %d , Z: %f", i, aUsers[i], com2.Z);
+			//printf("\n");
 			g_DepthGenerator.ConvertRealWorldToProjective(1, &com, &com);
 
 			XnUInt32 nDummy = 0;
@@ -424,7 +445,7 @@ void DrawDepthMap(const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd)
 			else if (g_UserGenerator.GetSkeletonCap().IsTracking(aUsers[i]))
 			{
 				// Tracking
-				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d - Tracking", aUsers[i]);
+				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d - Tracking - X:%f,Y:%f,Z:%f", aUsers[i], com2.X, com2.Y, com2.Z);
 			}
 			else if (g_UserGenerator.GetSkeletonCap().IsCalibrating(aUsers[i]))
 			{
@@ -544,5 +565,287 @@ void DrawDepthMap(const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd)
 		glRasterPos2i(10, 10);
 
 		glPrintString(GLUT_BITMAP_HELVETICA_18, strFrameID);
+	}
+}
+
+int* moving_forward(float COM_tracker[][100], float threshold, int sample_num)
+{
+	int* direction = new int[15];
+	memset(direction,0,15*sizeof(int));
+	//printf("dfdfd:%f",COM_tracker[3][0]);
+	for(int j = 1; j < 15; j++)
+	{
+		for(int i = 0; i < sample_num*2; i++)
+		{
+			if((int)COM_tracker[j][i] == 0)
+			{
+				direction[j] = -1;
+				continue;
+			}
+		}
+		if(direction[j] == 0)
+		{
+			int bigger = 0;
+			for(int i = 0; i< sample_num; i ++)
+			{
+				if(COM_tracker[j][i] < COM_tracker[j][i+sample_num])
+				{
+					bigger++;
+				}
+			}
+			if(bigger >= threshold)
+			{
+				direction[j] = 1;
+			}
+		}
+		//printf("direction:%d",direction[j]);
+	}
+	return direction;
+}
+
+void DrawBox(XnUInt bottom, XnUInt top, XnUInt left, XnUInt right)
+{
+	//glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+	//glEnable(GL_COLOR_MATERIAL);
+	glBindTexture(GL_TEXTURE_2D,0);
+	glBegin(GL_LINES);
+		glColor4f(1.0f,0.0f,0.0f,1.0);
+		glLineWidth(2);
+        	//draw bottom boarder
+        	glVertex2i(left,bottom);
+        	glVertex2i(right,bottom);
+        	//draw right boarder
+        	glVertex2i(right,bottom);
+        	glVertex2i(right,top);
+        	//draw top boarder
+        	glVertex2i(right,top);
+        	glVertex2i(left,top);
+        	//draw left boarder
+        	glVertex2i(left,top);
+        	glVertex2i(left,bottom);
+        glEnd();
+}
+
+void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd, float COM_tracker[][100], int Bounding_Box[][4])
+{
+	memset(Bounding_Box, -1, 4*15*sizeof(int));
+	static bool bInitialized = false;
+        static GLuint imageTexID;
+        static XnRGB24Pixel* pImageTexBuf;
+        static int texWidth, texHeight;
+
+        float topLeftX;
+        float topLeftY;
+        float bottomRightY;
+        float bottomRightX;
+        float texXpos;
+        float texYpos;
+
+	//compute boarder of depth image on RGB image
+	int mask_bottom = -1;
+	int mask_top = -1;
+	int mask_left = -1;
+	int mask_right = -1;
+	for(XnUInt16 nY = 0; nY < imd.YRes(); nY++)
+	{
+		for(XnUInt16 nX = 0; nX < imd.XRes(); nX++)
+		{	
+			XnInt32 nDepthIndex = 0;
+			XnDouble dRealX = (nX +imd.XOffset())/(XnDouble)imd.FullXRes();
+			XnDouble dRealY = (nY +imd.YOffset())/(XnDouble)imd.FullYRes();
+			XnUInt32 nDepthX = dRealX * dmd.FullXRes() - dmd.XOffset();
+			XnUInt32 nDepthY = dRealY * dmd.FullYRes() - dmd.YOffset();
+			if (nDepthX >= dmd.XRes() || nDepthY >= dmd.YRes())
+			{
+				nDepthIndex = -1;
+			}
+			else
+			{
+				nDepthIndex = nDepthY*dmd.XRes() + nDepthX;
+			}
+			if(!(nDepthIndex == -1 || dmd.Data()[nDepthIndex] == 0))
+			{
+				if( mask_bottom == -1 || nY < mask_bottom)
+					mask_bottom = nDepthY;
+				if( mask_top == -1 || nY > mask_top)
+					mask_top = nDepthY;
+				if( mask_left == -1 || nX < mask_left)
+					mask_left = nDepthX;
+				if( mask_right == -1 || nX > mask_right)
+					mask_right = nDepthX;
+			}
+		}
+	}
+	//printf("%d,%d\n",imd.XOffset(),dmd.XOffset());
+
+        if(!bInitialized)
+        {
+                texWidth =  getClosestPowerOfTwo(imd.XRes());
+                texHeight = getClosestPowerOfTwo(imd.YRes());
+
+//                printf("Initializing depth texture: width = %d, height = %d\n", texWidth, texHeight);
+                imageTexID = initTexture((void**)&pImageTexBuf,texWidth, texHeight) ;
+
+//              printf("Initialized depth texture: width = %d, height = %d\n", texWidth, texHeight);
+                bInitialized = true;
+
+                topLeftX = imd.XRes();
+                topLeftY = 0;
+                bottomRightY = imd.YRes();
+                bottomRightX = 0;
+                texXpos =(float)imd.XRes()/texWidth;
+                texYpos =(float)imd.YRes()/texHeight;
+
+                memset(texcoords, 0, 8*sizeof(float));
+                texcoords[0] = texXpos, texcoords[1] = texYpos, texcoords[2] = texXpos, texcoords[7] = texYpos;
+        }
+
+	const XnLabel* pLabels = smd.Data();
+	XnUInt top = 0;
+	XnUInt bottom = 0;
+	XnUInt left = 0;
+	XnUInt right = 0;
+
+	XnRGB24Pixel* g_pTexMap = NULL;
+	XnUInt16 g_nXRes = getClosestPowerOfTwo(imd.XRes());
+        XnUInt16 g_nYRes = getClosestPowerOfTwo(imd.YRes());
+	//printf("%d\n",imd.XRes());
+	//printf("%d",imd.YRes());
+	g_pTexMap = (XnRGB24Pixel*)malloc(g_nXRes * g_nYRes * sizeof(XnRGB24Pixel));
+	xnOSMemSet(g_pTexMap, 0, g_nXRes * g_nYRes * sizeof(XnRGB24Pixel));
+
+        const XnRGB24Pixel* pImageRow = imd.RGB24Data();
+        XnRGB24Pixel* pTexRow = g_pTexMap + imd.YOffset() * g_nXRes;
+
+        for (XnUInt y = 0; y < imd.YRes(); ++y)
+        {
+                const XnRGB24Pixel* pImage = pImageRow;
+                XnRGB24Pixel* pTex = pTexRow + imd.XOffset();
+		XnLabel label2;
+
+                for (XnUInt x = 0; x < imd.XRes(); ++x, ++pImage, ++pTex)
+                {
+                        *pTex = *pImage;
+			//decide the position and size of bounding box
+			XnLabel label = *pLabels;
+			//printf("%d",label);
+			if(label < 15 && label > 0)
+			{
+				left = x;
+				right = x;
+				top = y;
+				bottom = y;
+				if( (int)left < Bounding_Box[label][2] || Bounding_Box[label][2] == -1)
+					Bounding_Box[label][2] = (int)left;
+				if( (int)right > Bounding_Box[label][3])
+					Bounding_Box[label][3] = (int)right;
+                        	if( (int)Bounding_Box[label][0] == -1)
+                                	Bounding_Box[label][0] = (int)bottom;
+                        	if( (int)top > Bounding_Box[label][1])
+                                	Bounding_Box[label][1] = (int)top;
+			}
+			else if(label != 0)
+				printf("Strange Label : %d\n", label);
+			
+			pLabels++;
+                }
+                pImageRow += imd.XRes();
+                pTexRow += g_nXRes;
+        }	
+	pImageTexBuf = g_pTexMap;
+
+	glBindTexture(GL_TEXTURE_2D, imageTexID);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texWidth, texHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, pImageTexBuf);
+	free (g_pTexMap);
+
+        // Display the OpenGL texture map
+        glColor4f(0.75,0.75,0.75,1);
+
+        glEnable(GL_TEXTURE_2D);
+        DrawTexture(imd.XRes(),imd.YRes(),0,0);
+	//if direction is 1 --- moving forward
+	//change Bounding Box color
+	int* direction = NULL;
+	direction = moving_forward(COM_tracker,20,20);
+	for( int i =1; i< 15; i++)
+	{
+		//printf("%d\n",direction[i]);
+		if( Bounding_Box[i][0] !=-1 && direction[i] == 1)
+		{
+			bottom = Bounding_Box[i][0];
+			top = Bounding_Box[i][1];
+			left = Bounding_Box[i][2];
+			right = Bounding_Box[i][3];
+			DrawBox(bottom,top,left,right);
+		}
+	}
+	DrawBox((XnUInt)mask_bottom,(XnUInt)mask_top,(XnUInt)mask_left,(XnUInt)mask_right);
+        glDisable(GL_TEXTURE_2D);
+
+	
+	char strLabel[50] = "";
+	XnUserID aUsers[15];
+	XnUInt16 nUsers = 15;
+	g_UserGenerator.GetUsers(aUsers, nUsers);
+	for (int i = 0; i < nUsers; ++i)
+	{
+#ifndef USE_GLES
+		XnPoint3D com;
+                g_UserGenerator.GetCoM(aUsers[i], com);
+                XnPoint3D com2 = com;
+		//generater COM tracker
+		if (aUsers[i] < 15)
+		{
+			int label = aUsers[i];
+			for (int j = 99; j >= 1; --j)
+			{
+				float COM_value = COM_tracker[label][j-1];
+				COM_tracker[label][j] = COM_value;
+			}
+			COM_tracker[label][0] = com2.Z;
+		}		
+		else
+		{
+			printf("UserID is larger than 15");
+		}
+				
+				
+		if (g_bPrintID)
+		{
+			//printf("User %d : %d , Z: %f", i, aUsers[i], com2.Z);
+			//printf("\n");
+			g_DepthGenerator.ConvertRealWorldToProjective(1, &com, &com);
+
+			XnUInt32 nDummy = 0;
+
+			xnOSMemSet(strLabel, 0, sizeof(strLabel));
+			if (!g_bPrintState)
+			{
+				// Tracking
+				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d", aUsers[i]);
+			}
+			else if (g_UserGenerator.GetSkeletonCap().IsTracking(aUsers[i]))
+			{
+				// Tracking
+				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d - Tracking - X:%f,Y:%f,Z:%f", aUsers[i], com2.X, com2.Y, com2.Z);
+			}
+			else if (g_UserGenerator.GetSkeletonCap().IsCalibrating(aUsers[i]))
+			{
+				// Calibrating
+				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d - Calibrating [%s]", aUsers[i], GetCalibrationErrorString(m_Errors[aUsers[i]].first));
+			}
+			else
+			{
+				// Nothing
+				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d - Looking for pose [%s]", aUsers[i], GetPoseErrorString(m_Errors[aUsers[i]].second));
+			}
+
+
+			glColor4f(1-Colors[i%nColors][0], 1-Colors[i%nColors][1], 1-Colors[i%nColors][2], 1);
+
+			glRasterPos2i(com.X, com.Y);
+			glPrintString(GLUT_BITMAP_HELVETICA_18, strLabel);
+		}
+#endif
 	}
 }

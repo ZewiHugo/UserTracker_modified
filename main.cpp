@@ -27,6 +27,8 @@
 #include <XnCppWrapper.h>
 #include "SceneDrawer.h"
 #include <XnPropNames.h>
+#include <XnOS.h>
+#include <XnCppWrapper.h>
 
 //---------------------------------------------------------------------------
 // Globals
@@ -34,6 +36,7 @@
 xn::Context g_Context;
 xn::ScriptNode g_scriptNode;
 xn::DepthGenerator g_DepthGenerator;
+xn::ImageGenerator g_ImageGenerator;
 xn::UserGenerator g_UserGenerator;
 xn::Player g_Player;
 
@@ -47,6 +50,10 @@ XnBool g_bPrintState = TRUE;
 
 XnBool g_bPrintFrameID = FALSE;
 XnBool g_bMarkJoints = FALSE;
+
+XnBool Show_Image = FALSE;
+float COM_tracker[15][100];
+int Bounding_Box[15][4];
 
 #ifndef USE_GLES
 #if (XN_PLATFORM == XN_PLATFORM_MACOSX)
@@ -80,6 +87,7 @@ void CleanupExit()
 {
 	g_scriptNode.Release();
 	g_DepthGenerator.Release();
+	g_ImageGenerator.Release();
 	g_UserGenerator.Release();
 	g_Player.Release();
 	g_Context.Release();
@@ -200,8 +208,51 @@ void LoadCalibration()
 	}
 }
 
+void print_COM(float COM_tracker[][100])
+{
+	for (int i = 0; i < 15; ++i)
+	{
+		if (COM_tracker[i][0] != 0)
+		{
+			for( int j = 0; j < 100; ++j)
+				printf("User ID: %d, frame: %d, Z: %f \n",i,j,COM_tracker[i][j]);
+			printf("\n\n\n");
+		}
+	}
+}
+
+void print_Box_Pos(int Bounding_Box[][4])
+{
+	for (int i = 0; i< 15; ++ i)
+	{	
+		printf("boarder label %d:", i);
+		for (int j = 0; j< 4; ++j)
+		{
+			printf("%d, ", Bounding_Box[i][j]);
+			printf("\n");
+		}
+	}
+}
+
+void changeRegistration(int nValue)
+{
+	if (!g_DepthGenerator.IsValid() || !g_DepthGenerator.IsCapabilitySupported(XN_CAPABILITY_ALTERNATIVE_VIEW_POINT))
+	{
+		return;
+	}
+
+	if(!nValue)
+	{
+		g_DepthGenerator.GetAlternativeViewPointCap().ResetViewPoint();
+	}
+	else if (g_ImageGenerator.IsValid())
+	{
+		g_DepthGenerator.GetAlternativeViewPointCap().SetViewPoint(g_ImageGenerator);
+	}
+}
+
 // this function is called each frame
-void glutDisplay (void)
+void glutDisplay ()
 {
 
 	glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -213,7 +264,9 @@ void glutDisplay (void)
 
 	xn::SceneMetaData sceneMD;
 	xn::DepthMetaData depthMD;
+        xn::ImageMetaData imageMD;
 	g_DepthGenerator.GetMetaData(depthMD);
+	g_ImageGenerator.GetMetaData(imageMD);
 #ifndef USE_GLES
 	glOrtho(0, depthMD.XRes(), depthMD.YRes(), 0, -1.0, 1.0);
 #else
@@ -230,8 +283,12 @@ void glutDisplay (void)
 
 		// Process the data
 		g_DepthGenerator.GetMetaData(depthMD);
+		g_ImageGenerator.GetMetaData(imageMD);
 		g_UserGenerator.GetUserPixels(0, sceneMD);
-		DrawDepthMap(depthMD, sceneMD);
+		if(Show_Image == FALSE)
+			DrawDepthMap(depthMD, sceneMD,COM_tracker,Bounding_Box);
+		else
+			DrawImageMap(imageMD, depthMD, sceneMD,COM_tracker,Bounding_Box);
 
 #ifndef USE_GLES
 	glutSwapBuffers();
@@ -292,6 +349,20 @@ void glutKeyboard (unsigned char key, int /*x*/, int /*y*/)
 	case 'L':
 		LoadCalibration();
 		break;
+	case 'P':
+		print_COM(COM_tracker);
+		break;
+	case 'B':
+		print_Box_Pos(Bounding_Box);
+		break;
+	case '1':
+		Show_Image = FALSE;
+		changeRegistration(0);
+		break;
+	case '2':
+		Show_Image = TRUE;
+		changeRegistration(1);
+		break;
 	}
 }
 void glInit (int * pargc, char ** argv)
@@ -328,6 +399,7 @@ int main(int argc, char **argv)
 {
 	XnStatus nRetVal = XN_STATUS_OK;
 
+	memset(COM_tracker,0,15*100*sizeof(float));
 	if (argc > 1)
 	{
 		nRetVal = g_Context.Init();
@@ -387,6 +459,13 @@ int main(int argc, char **argv)
 		CHECK_RC(nRetVal, "set empty depth map");
 
 		g_DepthGenerator = mockDepth;
+	}
+
+	nRetVal = g_Context.FindExistingNode(XN_NODE_TYPE_IMAGE, g_ImageGenerator);
+	if (nRetVal != XN_STATUS_OK)
+	{
+		printf("No image node exists! check your XML.");
+		return 1;
 	}
 
 	nRetVal = g_Context.FindExistingNode(XN_NODE_TYPE_USER, g_UserGenerator);
@@ -450,7 +529,7 @@ int main(int argc, char **argv)
 
 	while (!g_bQuit)
 	{
-		glutDisplay();
+		glutDisplay(Com_tracker);
 		eglSwapBuffers(display, surface);
 	}
 	opengles_shutdown(display, surface, context);

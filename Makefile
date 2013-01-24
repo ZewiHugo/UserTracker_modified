@@ -6,7 +6,7 @@ INC_DIRS = ../../Include =/usr/include/ni
 
 SRC_FILES = ./*.cpp
 
-EXE_NAME = Sample-NiUserTracker
+EXE_NAME = Sample-NiUserTracker_3
 
 ifeq "$(GLUT_SUPPORTED)" "1"
 	ifeq ("$(OSTYPE)","Darwin")
