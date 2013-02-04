@@ -23,6 +23,7 @@
 #define XNV_POINT_DRAWER_H_
 
 #include <XnCppWrapper.h>
+#include <time.h>
 
 void DrawDepthMap(const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd, float COM_tracker[][100], int Bounding_Box[][4]);
 void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd, float COM_tracker[][100], int Bounding_Box[][4]);

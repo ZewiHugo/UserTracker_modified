@@ -46,7 +46,22 @@ extern XnBool g_bPrintState;
 
 extern XnBool g_bPrintFrameID;
 extern XnBool g_bMarkJoints;
+extern XnBool *is_warning;
+extern clock_t *time_start_warn;
 GLfloat texcoords[8];
+const int BOUNDING_BOX_WIDTH = 2;
+const int WARNING_BOX_WIDTH = 20;
+const XnUInt WARNING_BOTTOM = 1;
+const XnUInt WARNING_TOP = 479;
+const XnUInt WARNING_LEFT = 1;
+const XnUInt WARNING_RIGHT = 639;
+const float WARNING_TIME = 1.5;
+const float THRESHOLD = 100;
+const int SAMPLE_NUM = 20;
+const int FAST_SAMPLE_NUM = 5;
+const int FAST = 1;
+const int MEDIUM = 2;
+const int SLOW = 3;
 
 #include <map>
 std::map<XnUInt32, std::pair<XnCalibrationStatus, XnPoseDetectionStatus> > m_Errors;
@@ -445,7 +460,7 @@ void DrawDepthMap(const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd, fl
 			else if (g_UserGenerator.GetSkeletonCap().IsTracking(aUsers[i]))
 			{
 				// Tracking
-				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d - Tracking - X:%f,Y:%f,Z:%f", aUsers[i], com2.X, com2.Y, com2.Z);
+				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d - Tracking - Z:%f", aUsers[i], com2.Z);
 			}
 			else if (g_UserGenerator.GetSkeletonCap().IsCalibrating(aUsers[i]))
 			{
@@ -568,49 +583,89 @@ void DrawDepthMap(const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd, fl
 	}
 }
 
-int* moving_forward(float COM_tracker[][100], float threshold, int sample_num)
+float average(float COM_tracker[][100],int j,int start, int end)
+{
+	float sum = 0;
+	for(int i = start; i< end; i++)
+		sum = sum + COM_tracker[j][i];
+	float avg = sum/(end - start);
+	return avg;
+}
+
+bool moving_with_speed(float COM_tracker[][100], int user_id, int type)
+{
+	int sample_num;
+	if(type == FAST)
+	{
+		sample_num = FAST_SAMPLE_NUM;
+	}
+	else
+	{
+		sample_num = SAMPLE_NUM;
+	}
+	int check_sample_num = sample_num;
+	if(type == SLOW)
+	{
+		check_sample_num = 50;
+	}
+	for(int i = 0; i< check_sample_num*2; i++)
+	{
+		if((int)COM_tracker[user_id][i] == 0)
+		{
+			return false;
+		}
+	}
+	float avg_now = 0;
+	float avg_prev = 0;
+	if(type == SLOW)
+	{
+		avg_now = average(COM_tracker,user_id,0,sample_num);
+		avg_prev = average(COM_tracker,user_id,100-sample_num,100);
+	}
+	else
+	{
+		avg_now = average(COM_tracker,user_id,0,sample_num);
+                avg_prev = average(COM_tracker,user_id,sample_num,sample_num*2);
+	}
+	if(avg_prev - avg_now >= THRESHOLD)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+int* moving_forward(float COM_tracker[][100])
 {
 	int* direction = new int[15];
 	memset(direction,0,15*sizeof(int));
-	//printf("dfdfd:%f",COM_tracker[3][0]);
 	for(int j = 1; j < 15; j++)
-	{
-		for(int i = 0; i < sample_num*2; i++)
-		{
-			if((int)COM_tracker[j][i] == 0)
-			{
-				direction[j] = -1;
-				continue;
-			}
-		}
-		if(direction[j] == 0)
-		{
-			int bigger = 0;
-			for(int i = 0; i< sample_num; i ++)
-			{
-				if(COM_tracker[j][i] < COM_tracker[j][i+sample_num])
-				{
-					bigger++;
-				}
-			}
-			if(bigger >= threshold)
-			{
-				direction[j] = 1;
-			}
-		}
-		//printf("direction:%d",direction[j]);
-	}
+        {
+                bool wrong_direction;
+                for(int speed = FAST; speed <= SLOW; speed++)
+                {
+                        wrong_direction = moving_with_speed(COM_tracker,j,speed);
+                        if(wrong_direction == true)
+                        {
+                                direction[j] = 1;
+				printf("user %d: %f\n",j,COM_tracker[j][0]);
+                                break;
+                        }
+                }
+        }
 	return direction;
 }
 
-void DrawBox(XnUInt bottom, XnUInt top, XnUInt left, XnUInt right)
+void DrawBox(XnUInt bottom, XnUInt top, XnUInt left, XnUInt right, const int width)
 {
 	//glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
 	//glEnable(GL_COLOR_MATERIAL);
 	glBindTexture(GL_TEXTURE_2D,0);
+	glColor4f(1.0f,0.0f,0.0f,1.0);
+        glLineWidth(width);
 	glBegin(GL_LINES);
-		glColor4f(1.0f,0.0f,0.0f,1.0);
-		glLineWidth(2);
         	//draw bottom boarder
         	glVertex2i(left,bottom);
         	glVertex2i(right,bottom);
@@ -624,6 +679,40 @@ void DrawBox(XnUInt bottom, XnUInt top, XnUInt left, XnUInt right)
         	glVertex2i(left,top);
         	glVertex2i(left,bottom);
         glEnd();
+}
+
+void DrawWarningBox(void)
+{
+	glBindTexture(GL_TEXTURE_2D,0);
+        glColor4f(1.0f,0.0f,0.0f,1.0);
+	glRectf(0,0,640,WARNING_BOX_WIDTH);
+	glRectf(0,0,WARNING_BOX_WIDTH,480);
+	glRectf(640,480,640-WARNING_BOX_WIDTH,0);
+	glRectf(640,480,0,480-WARNING_BOX_WIDTH);
+}
+
+void ShowWarning(XnBool *is_warning_p, clock_t *time_start_warn_p, XnBool direction)
+{
+	if(direction == FALSE)
+	{
+		DrawWarningBox();
+		*is_warning_p = TRUE;
+		*time_start_warn_p = clock();
+	}
+	else if(*is_warning_p == TRUE)
+	{
+		clock_t time_now = clock();
+		float t = ((float)(time_now - *time_start_warn_p))/CLOCKS_PER_SEC;
+		//printf("%f\n",t);
+		if( t >= WARNING_TIME)
+		{
+			*is_warning_p = FALSE;
+		}
+		else
+		{
+			DrawWarningBox();
+		}
+	}
 }
 
 void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, const xn::SceneMetaData& smd, float COM_tracker[][100], int Bounding_Box[][4])
@@ -766,7 +855,8 @@ void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, co
 	//if direction is 1 --- moving forward
 	//change Bounding Box color
 	int* direction = NULL;
-	direction = moving_forward(COM_tracker,20,20);
+	direction = moving_forward(COM_tracker);
+	XnBool is_direction_right = TRUE;
 	for( int i =1; i< 15; i++)
 	{
 		//printf("%d\n",direction[i]);
@@ -776,10 +866,16 @@ void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, co
 			top = Bounding_Box[i][1];
 			left = Bounding_Box[i][2];
 			right = Bounding_Box[i][3];
-			DrawBox(bottom,top,left,right);
+			DrawBox(bottom,top,left,right,BOUNDING_BOX_WIDTH);
+			if( is_direction_right == TRUE)
+			{
+				is_direction_right = FALSE;
+			}
 		}
 	}
-	DrawBox((XnUInt)mask_bottom,(XnUInt)mask_top,(XnUInt)mask_left,(XnUInt)mask_right);
+	ShowWarning(is_warning,time_start_warn,is_direction_right);
+	//The following is to show the cover area of sensor.
+	//DrawBox((XnUInt)mask_bottom,(XnUInt)mask_top,(XnUInt)mask_left,(XnUInt)mask_right,BOUNDING_BOX_WIDTH);
         glDisable(GL_TEXTURE_2D);
 
 	
@@ -827,7 +923,7 @@ void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, co
 			else if (g_UserGenerator.GetSkeletonCap().IsTracking(aUsers[i]))
 			{
 				// Tracking
-				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d - Tracking - X:%f,Y:%f,Z:%f", aUsers[i], com2.X, com2.Y, com2.Z);
+				xnOSStrFormat(strLabel, sizeof(strLabel), &nDummy, "%d - Tracking - Z:%f", aUsers[i], com2.Z);
 			}
 			else if (g_UserGenerator.GetSkeletonCap().IsCalibrating(aUsers[i]))
 			{

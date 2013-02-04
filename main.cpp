@@ -52,9 +52,14 @@ XnBool g_bPrintFrameID = FALSE;
 XnBool g_bMarkJoints = FALSE;
 
 XnBool Show_Image = FALSE;
+XnBool is_warning_value = FALSE;
+XnBool *is_warning = &is_warning_value;
+
 float COM_tracker[15][100];
 int Bounding_Box[15][4];
 
+clock_t time_start_warn_value = clock();
+clock_t *time_start_warn = &time_start_warn_value;
 #ifndef USE_GLES
 #if (XN_PLATFORM == XN_PLATFORM_MACOSX)
 	#include <GLUT/glut.h>
