@@ -23,6 +23,7 @@
 // Includes
 //---------------------------------------------------------------------------
 #include <math.h>
+#include <iostream>
 #include "SceneDrawer.h"
 
 #ifndef USE_GLES
@@ -54,7 +55,7 @@ const XnUInt WARNING_LEFT = 1;
 const XnUInt WARNING_RIGHT = 639;
 const float WARNING_TIME = 1.5;
 const float THRESHOLD = 100;
-const int SAMPLE_NUM = 20;
+const int SAMPLE_NUM = 15;
 const int FAST_SAMPLE_NUM = 5;
 const int FAST = 1;
 const int MEDIUM = 2;
@@ -397,17 +398,20 @@ int* moving_forward(float COM_tracker[][100])
 	memset(direction,0,15*sizeof(int));
 	for(int j = 1; j < 15; j++)
         {
-                bool wrong_direction;
-                for(int speed = FAST; speed <= SLOW; speed++)
-                {
-                        wrong_direction = moving_with_speed(COM_tracker,j,speed);
-                        if(wrong_direction == true)
-                        {
-                                direction[j] = 1;
-				printf("user %d: %f\n",j,COM_tracker[j][0]);
-                                break;
-                        }
-                }
+		if(COM_tracker[j][0] != 0)
+		{
+                	bool wrong_direction;
+                	for(int speed = FAST; speed <= SLOW; speed++)
+                	{
+                        	wrong_direction = moving_with_speed(COM_tracker,j,speed);
+                        	if(wrong_direction == true)
+                        	{
+                                	direction[j] = 1;
+					//printf("user %d: %f\n",j,COM_tracker[j][0]);
+                                	break;
+                        	}
+                	}
+		}
         }
 	return direction;
 }
@@ -487,36 +491,50 @@ void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, co
 	int mask_top = -1;
 	int mask_left = -1;
 	int mask_right = -1;
-	for(XnUInt16 nY = 0; nY < imd.YRes(); nY++)
-	{
-		for(XnUInt16 nX = 0; nX < imd.XRes(); nX++)
-		{	
-			XnInt32 nDepthIndex = 0;
-			XnDouble dRealX = (nX +imd.XOffset())/(XnDouble)imd.FullXRes();
-			XnDouble dRealY = (nY +imd.YOffset())/(XnDouble)imd.FullYRes();
-			XnUInt32 nDepthX = dRealX * dmd.FullXRes() - dmd.XOffset();
-			XnUInt32 nDepthY = dRealY * dmd.FullYRes() - dmd.YOffset();
-			if (nDepthX >= dmd.XRes() || nDepthY >= dmd.YRes())
-			{
-				nDepthIndex = -1;
-			}
-			else
-			{
-				nDepthIndex = nDepthY*dmd.XRes() + nDepthX;
-			}
-			if(!(nDepthIndex == -1 || dmd.Data()[nDepthIndex] == 0))
-			{
-				if( mask_bottom == -1 || nY < mask_bottom)
-					mask_bottom = nDepthY;
-				if( mask_top == -1 || nY > mask_top)
-					mask_top = nDepthY;
-				if( mask_left == -1 || nX < mask_left)
-					mask_left = nDepthX;
-				if( mask_right == -1 || nX > mask_right)
-					mask_right = nDepthX;
-			}
-		}
-	}
+	XnUInt32 imd_YRes = imd.YRes();
+	XnUInt32 imd_XRes = imd.XRes();
+	XnUInt32 imd_FullXRes = imd.FullXRes();
+	XnUInt32 imd_FullYRes = imd.FullYRes();
+	XnUInt32 imd_XOffset = imd.XOffset();
+	XnUInt32 imd_YOffset = imd.YOffset();
+	XnUInt32 dmd_YRes = dmd.YRes();
+        XnUInt32 dmd_XRes = dmd.XRes();
+        XnUInt32 dmd_FullXRes = dmd.FullXRes();
+        XnUInt32 dmd_FullYRes = dmd.FullYRes();
+        XnUInt32 dmd_XOffset = dmd.XOffset();
+        XnUInt32 dmd_YOffset = dmd.YOffset();
+	const XnDepthPixel* dmd_Data = dmd.Data();
+	
+	//for(XnUInt16 nY = 0; nY < imd_YRes; nY++)
+	//{
+	//	for(XnUInt16 nX = 0; nX < imd_XRes; nX++)
+	//	{	
+	//		XnInt32 nDepthIndex = 0;
+	//		XnDouble dRealX = (nX +imd_XOffset)/(XnDouble)imd_FullXRes;
+	//		XnDouble dRealY = (nY +imd_YOffset)/(XnDouble)imd_FullYRes;
+	//		XnUInt32 nDepthX = dRealX * dmd_FullXRes - dmd_XOffset;
+	//		XnUInt32 nDepthY = dRealY * dmd_FullYRes - dmd_YOffset;
+	//		if (nDepthX >= dmd_XRes || nDepthY >= dmd_YRes)
+	//		{
+	//			nDepthIndex = -1;
+	//		}
+	//		else
+	//		{
+	//			nDepthIndex = nDepthY*dmd_XRes + nDepthX;
+	//		}
+	//		if(!(nDepthIndex == -1 || dmd_Data[nDepthIndex] == 0))
+	//		{
+	//			if( mask_bottom == -1 || nY < mask_bottom)
+	//				mask_bottom = nDepthY;
+	//			if( mask_top == -1 || nY > mask_top)
+	//				mask_top = nDepthY;
+	//			if( mask_left == -1 || nX < mask_left)
+	//				mask_left = nDepthX;
+	//			if( mask_right == -1 || nX > mask_right)
+	//				mask_right = nDepthX;
+	//		}
+	//	}
+	//}
 	//printf("%d,%d\n",imd.XOffset(),dmd.XOffset());
 
         if(!bInitialized)
@@ -558,13 +576,13 @@ void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, co
         const XnRGB24Pixel* pImageRow = imd.RGB24Data();
         XnRGB24Pixel* pTexRow = g_pTexMap + imd.YOffset() * g_nXRes;
 
-        for (XnUInt y = 0; y < imd.YRes(); ++y)
+        for (XnUInt y = 0; y < imd_YRes; ++y)
         {
                 const XnRGB24Pixel* pImage = pImageRow;
-                XnRGB24Pixel* pTex = pTexRow + imd.XOffset();
+                XnRGB24Pixel* pTex = pTexRow + imd_XOffset;
 		XnLabel label2;
 
-                for (XnUInt x = 0; x < imd.XRes(); ++x, ++pImage, ++pTex)
+                for (XnUInt x = 0; x < imd_XRes; ++x, ++pImage, ++pTex)
                 {
                         *pTex = *pImage;
 			//decide the position and size of bounding box
@@ -590,7 +608,7 @@ void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, co
 			
 			pLabels++;
                 }
-                pImageRow += imd.XRes();
+                pImageRow += imd_XRes;
                 pTexRow += g_nXRes;
         }	
 	pImageTexBuf = g_pTexMap;
@@ -604,6 +622,8 @@ void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, co
 
         glEnable(GL_TEXTURE_2D);
         DrawTexture(imd.XRes(),imd.YRes(),0,0);
+	glDisable(GL_TEXTURE_2D);
+
 	//if direction is 1 --- moving forward
 	//change Bounding Box color
 	int* direction = NULL;
@@ -628,7 +648,7 @@ void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, co
 	ShowWarning(is_warning,time_start_warn,is_direction_right);
 	//The following is to show the cover area of sensor.
 	//DrawBox((XnUInt)mask_bottom,(XnUInt)mask_top,(XnUInt)mask_left,(XnUInt)mask_right,BOUNDING_BOX_WIDTH);
-        glDisable(GL_TEXTURE_2D);
+        //glDisable(GL_TEXTURE_2D);
 
 	
 	char strLabel[50] = "";
@@ -677,4 +697,18 @@ void DrawImageMap(const xn::ImageMetaData& imd, const xn::DepthMetaData& dmd, co
 		glPrintString(GLUT_BITMAP_HELVETICA_18, strLabel);
 #endif
 	}
+	
+	if (g_bPrintFrameID)
+        {
+                static XnChar strFrameID[80];
+                xnOSMemSet(strFrameID, 0, 80);
+                XnUInt32 nDummy = 0;
+                xnOSStrFormat(strFrameID, sizeof(strFrameID), &nDummy, "%d", dmd.FrameID());
+
+                glColor4f(1, 0, 0, 1);
+
+                glRasterPos2i(10, 10);
+
+                glPrintString(GLUT_BITMAP_HELVETICA_18, strFrameID);
+        }
 }

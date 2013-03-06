@@ -29,6 +29,8 @@
 #include <XnPropNames.h>
 #include <XnOS.h>
 #include <XnCppWrapper.h>
+#include <iostream>
+#include <sys/time.h>
 
 //---------------------------------------------------------------------------
 // Globals
@@ -93,7 +95,8 @@ void CleanupExit()
 	g_Player.Release();
 	g_Context.Release();
 
-	exit (1);
+	//exit (1);
+	exit(0);
 }
 
 // Callback: New user was detected
@@ -158,7 +161,7 @@ void changeRegistration(int nValue)
 // this function is called each frame
 void glutDisplay ()
 {
-
+	clock_t t1 = clock();
 	glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	// Setup the OpenGL viewpoint
@@ -186,17 +189,20 @@ void glutDisplay ()
 	}
 
 		// Process the data
-		g_DepthGenerator.GetMetaData(depthMD);
-		g_ImageGenerator.GetMetaData(imageMD);
-		g_UserGenerator.GetUserPixels(0, sceneMD);
-		if(Show_Image == FALSE)
-			DrawDepthMap(depthMD, sceneMD,COM_tracker,Bounding_Box);
-		else
-			DrawImageMap(imageMD, depthMD, sceneMD,COM_tracker,Bounding_Box);
-
+	g_DepthGenerator.GetMetaData(depthMD);
+	g_ImageGenerator.GetMetaData(imageMD);
+	g_UserGenerator.GetUserPixels(0, sceneMD);
+	if(Show_Image == FALSE)
+		DrawDepthMap(depthMD, sceneMD,COM_tracker,Bounding_Box);
+	else
+	{
+		DrawImageMap(imageMD, depthMD, sceneMD,COM_tracker,Bounding_Box);
+	}
 #ifndef USE_GLES
 	glutSwapBuffers();
 #endif
+	clock_t t2 = clock();
+        std::cout << t2 - t1 << std::endl;
 }
 
 #ifndef USE_GLES
@@ -390,7 +396,7 @@ int main(int argc, char **argv)
 
 	while (!g_bQuit)
 	{
-		glutDisplay(Com_tracker);
+		glutDisplay();
 		eglSwapBuffers(display, surface);
 	}
 	opengles_shutdown(display, surface, context);
